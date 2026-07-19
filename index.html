@@ -105,8 +105,11 @@
             border-color: var(--primary-color);
         }
 
-        #webcam-container canvas {
-            display: block;
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* สลับซ้ายขวาให้เหมือนกระจกเงา */
         }
 
         #label-container {
@@ -150,101 +153,121 @@
 <script type="text/javascript">
     const URL = "https://teachablemachine.withgoogle.com/models/0pcLfMHe6/";
 
-    let model, webcam, labelContainer, maxPredictions;
+    let model, labelContainer, maxPredictions;
+    let localStream = null;
+    let videoElement = null;
     let isActiveSession = false;
     let countdownInterval = null;
 
-    const RUN_DURATION = 10000;      // ให้กล้องทำงานรอบละ 10 วินาที
+    const RUN_DURATION = 10000;      // ระยะเวลาเปิดกล้องรอบละ 10 วินาที
     const INTERVAL_TIME = 180000;    // วนลูปทุกๆ 3 นาที (180,000 ms)
 
-    // 1. เริ่มต้นระบบครั้งแรก
+    // 1. เริ่มต้นระบบและโหลด Model
     async function startAutomation() {
         document.getElementById("start-btn").disabled = true;
         document.getElementById("start-btn").innerText = "Running...";
+        updateStatus("กำลังโหลด Model...");
         
-        updateStatus("กำลังโหลด Model และเปิดกล้องครั้งแรก...");
-        
-        // โหลด Model
-        model = await tmImage.load(URL + "model.json", URL + "metadata.json");
-        maxPredictions = model.getTotalClasses();
+        try {
+            model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+            maxPredictions = model.getTotalClasses();
 
-        // สร้างพื้นที่แสดงผลข้อความทำนาย
-        labelContainer = document.getElementById("label-container");
-        labelContainer.innerHTML = ""; 
-        for (let i = 0; i < maxPredictions; i++) {
-            let row = document.createElement("div");
-            row.className = "label-row";
-            labelContainer.appendChild(row);
+            // สร้าง UI แสดงข้อความผลลัพธ์
+            labelContainer = document.getElementById("label-container");
+            labelContainer.innerHTML = ""; 
+            for (let i = 0; i < maxPredictions; i++) {
+                let row = document.createElement("div");
+                row.className = "label-row";
+                labelContainer.appendChild(row);
+            }
+
+            // เริ่มงานรอบแรกทันที
+            runSession();
+        } catch (error) {
+            updateStatus("โหลด Model ล้มเหลว กรุณาตรวจสอบลิงก์โมเดล");
+            console.error(error);
         }
-
-        // ตั้งค่ากล้องหลักทิ้งไว้เลยเพื่อไม่ให้เกิดการสร้างซ้ำจนค้าง
-        const flip = true;
-        webcam = new tmImage.Webcam(200, 200, flip);
-        await webcam.setup(); 
-        
-        // นำ Canvas ไปแปะใน UI
-        const container = document.getElementById("webcam-container");
-        const placeholder = document.getElementById("cam-placeholder");
-        if(placeholder) placeholder.remove();
-        container.appendChild(webcam.canvas);
-
-        // รัน Loop หลักของระบบทิ้งไว้
-        window.requestAnimationFrame(loop);
-
-        // เริ่มต้นการทำงานรอบแรกทันที
-        runSession();
     }
 
-    // 2. ฟังก์ชันเริ่มสั่งให้กล้อง "จับภาพและทำนายผล"
+    // 2. ฟังก์ชันเปิดกล้องและเริ่มทำนายผล
     async function runSession() {
-        updateStatus("กล้องกำลังทำงาน...", true);
-        document.getElementById("webcam-container").classList.add("active");
+        updateStatus("กำลังเปิดกล้อง...", true);
+        const container = document.getElementById("webcam-container");
+        container.innerHTML = ""; // ล้างหน้าจอเก่าออก
         
-        // สั่งเปิดการรับภาพจากกล้อง
-        if (webcam.webcam && webcam.webcam.srcObject) {
-            webcam.webcam.srcObject.getTracks().forEach(track => track.enabled = true);
-        }
-        
-        isActiveSession = true;
+        try {
+            // เรียกใช้สตรีมกล้องผ่าน Web API มาตรฐาน
+            localStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: 200, height: 200, facingMode: "user" }, 
+                audio: false 
+            });
 
-        // เมื่อทำงานครบ 10 วินาที ให้หยุดทำนายและพักกล้อง
-        setTimeout(() => {
-            stopSession();
-        }, RUN_DURATION);
+            // สร้าง HTML Video Element มารับภาพ
+            videoElement = document.createElement("video");
+            videoElement.srcObject = localStream;
+            videoElement.autoplay = true;
+            videoElement.playsInline = true;
+            container.appendChild(videoElement);
+            container.classList.add("active");
+
+            isActiveSession = true;
+            updateStatus("กล้องกำลังตรวจจับภาพ...", true);
+            
+            // เริ่มลูปทำนายผล
+            window.requestAnimationFrame(loop);
+
+            // ตั้งเวลาปิดเมื่อทำงานครบกำหนด (10 วินาที)
+            setTimeout(() => {
+                stopSession();
+            }, RUN_DURATION);
+
+        } catch (err) {
+            updateStatus("ไม่สามารถเข้าถึงกล้องได้! กรุณาอนุญาตสิทธิ์การใช้กล้อง หรือใช้ HTTPS");
+            console.error("Camera error:", err);
+            // หากเปิดไม่สำเร็จ ให้รอนับถอยหลังไปรอบถัดไปแทนเพื่อไม่ให้ระบบค้าง
+            startCountdown((INTERVAL_TIME - RUN_DURATION) / 1000);
+        }
     }
 
-    // 3. ฟังก์ชันสั่ง "พักกล้อง" เพื่อรอรอบถัดไป
+    // 3. ฟังก์ชันปิดกล้องอย่างสมบูรณ์เพื่อประหยัดพลังงาน
     function stopSession() {
         isActiveSession = false;
-        document.getElementById("webcam-container").classList.remove("active");
         
-        // สั่งปิด Track ภาพชั่วคราว (ไฟกล้องจะดับ หรือภาพจะหยุดนิ่งเพื่อประหยัดพลังงาน)
-        if (webcam.webcam && webcam.webcam.srcObject) {
-            webcam.webcam.srcObject.getTracks().forEach(track => track.enabled = false);
+        // สั่งหยุดการทำงานของฮาร์ดแวร์กล้องทั้งหมด (ไฟกล้องจะดับสนิท)
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
         }
 
-        // ล้างค่าข้อความเปอร์เซ็นต์เก่าตอนดับกล้อง
+        // ล้าง Element กล้องออกจากหน้าจอ
+        const container = document.getElementById("webcam-container");
+        container.innerHTML = '<span style="color: #94a3b8; font-size: 14px;">กล้องปิดอยู่</span>';
+        container.classList.remove("active");
+        
+        // เคลียร์ค่าตัวเลขเดิม
         for (let i = 0; i < maxPredictions; i++) {
             labelContainer.childNodes[i].innerHTML = `<span>รอรอบถัดไป...</span> <strong>-</strong>`;
         }
 
-        // เริ่มนับถอยหลัง 3 นาทีก่อนเริ่มรอบใหม่ (ลบเวลาที่เปิดกล้องไปแล้ว 10 วินาที)
+        // เริ่มนับถอยหลังเพื่อเข้าสู่รอบถัดไปในอีก 3 นาที
         let remainTime = (INTERVAL_TIME - RUN_DURATION) / 1000;
         startCountdown(remainTime);
     }
 
-    // 4. Loop หลักที่คอยอัปเดตภาพ
+    // 4. ลูปอัปเดตการทำนายผล
     async function loop() {
-        if (isActiveSession) {
-            webcam.update(); 
+        if (!isActiveSession) return;
+        
+        // ตรวจสอบความพร้อมของเฟรมวิดีโอ
+        if (videoElement && videoElement.readyState === videoElement.HAVE_ENOUGH_DATA) {
             await predict();
         }
         window.requestAnimationFrame(loop);
     }
 
-    // 5. ฟังก์ชันทำนายผล
+    // 5. ส่งภาพจาก Video Element ให้ Teachable Machine คำนวณ
     async function predict() {
-        const prediction = await model.predict(webcam.canvas);
+        if (!model || !videoElement) return;
+        const prediction = await model.predict(videoElement);
         for (let i = 0; i < maxPredictions; i++) {
             const className = prediction[i].className;
             const probability = (prediction[i].probability * 100).toFixed(0) + "%";
@@ -252,7 +275,7 @@
         }
     }
 
-    // ฟังก์ชันช่วยแสดงสถานะ
+    // ฟังก์ชันอัปเดตข้อความสถานะ
     function updateStatus(text, isActive = false) {
         const statusText = document.getElementById("status-text");
         statusText.innerText = "สถานะ: " + text;
@@ -263,7 +286,7 @@
         }
     }
 
-    // ฟังก์ชันช่วยนับถอยหลัง
+    // ฟังก์ชันระบบนับถอยหลัง
     function startCountdown(seconds) {
         clearInterval(countdownInterval);
         let timeLeft = seconds;
@@ -278,7 +301,7 @@
 
             if (timeLeft < 0) {
                 clearInterval(countdownInterval);
-                runSession(); // เมื่อหมดเวลานับถอยหลัง ให้เริ่มทำงานรอบใหม่
+                runSession(); // เริ่มรอบใหม่เมื่อเวลานับถอยหลังหมดลง
             }
         }, 1000);
     }
