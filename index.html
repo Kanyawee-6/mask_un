@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Teachable Machine Image Model AI</title>
     
-    <!-- สไตล์แต่งหน้าตา UI ให้สวยงามและทันสมัย -->
     <style>
         :root {
             --primary-color: #4f46e5;
@@ -139,118 +138,121 @@
     <div id="status-text">สถานะ: ปิดระบบ</div>
     
     <div id="webcam-container">
-        <span style="color: #94a3b8; font-size: 14px;">กล้องปิดอยู่</span>
+        <span id="cam-placeholder" style="color: #94a3b8; font-size: 14px;">กล้องปิดอยู่</span>
     </div>
     
     <div id="label-container"></div>
 </div>
 
-<!-- โหลด Libraries จาก Google -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
 <script type="text/javascript">
-    // ลิงก์ไปยังโมเดล Teachable Machine ของคุณ
-    const URL = "https://teachablemachine.withgoogle.com/models/0pcLfMHe6/";[cite: 1]
+    const URL = "https://teachablemachine.withgoogle.com/models/0pcLfMHe6/";
 
     let model, webcam, labelContainer, maxPredictions;
-    let isLooping = false;
-    let automationInterval = null;
+    let isActiveSession = false;
     let countdownInterval = null;
 
-    const RUN_DURATION = 10000;      // ระยะเวลาให้กล้องเปิดทำงานในแต่ละรอบ = 10 วินาที
-    const INTERVAL_TIME = 180000;    // ตั้งเวลาทำงานทุกๆ 3 นาที = 180,000 มิลลิวินาที
+    const RUN_DURATION = 10000;      // ให้กล้องทำงานรอบละ 10 วินาที
+    const INTERVAL_TIME = 180000;    // วนลูปทุกๆ 3 นาที (180,000 ms)
 
-    // ฟังก์ชันเริ่มต้นระบบ Automation เมื่อกดปุ่ม
+    // 1. เริ่มต้นระบบครั้งแรก
     async function startAutomation() {
         document.getElementById("start-btn").disabled = true;
         document.getElementById("start-btn").innerText = "Running...";
         
-        // โหลด Model ครั้งแรกครั้งเดียว
-        updateStatus("กำลังโหลด Model...");
-        const modelURL = URL + "model.json";[cite: 1]
-        const metadataURL = URL + "metadata.json";[cite: 1]
-        model = await tmImage.load(modelURL, metadataURL);[cite: 1]
-        maxPredictions = model.getTotalClasses();[cite: 1]
+        updateStatus("กำลังโหลด Model และเปิดกล้องครั้งแรก...");
+        
+        // โหลด Model
+        model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+        maxPredictions = model.getTotalClasses();
 
-        // สร้างพื้นที่แสดงผล Label ให้สวยงาม
-        labelContainer = document.getElementById("label-container");[cite: 1]
+        // สร้างพื้นที่แสดงผลข้อความทำนาย
+        labelContainer = document.getElementById("label-container");
         labelContainer.innerHTML = ""; 
-        for (let i = 0; i < maxPredictions; i++) {[cite: 1]
+        for (let i = 0; i < maxPredictions; i++) {
             let row = document.createElement("div");
             row.className = "label-row";
-            labelContainer.appendChild(row);[cite: 1]
+            labelContainer.appendChild(row);
         }
 
-        // เริ่มทำงานรอบแรกทันที
-        triggerCameraSession();
+        // ตั้งค่ากล้องหลักทิ้งไว้เลยเพื่อไม่ให้เกิดการสร้างซ้ำจนค้าง
+        const flip = true;
+        webcam = new tmImage.Webcam(200, 200, flip);
+        await webcam.setup(); 
+        
+        // นำ Canvas ไปแปะใน UI
+        const container = document.getElementById("webcam-container");
+        const placeholder = document.getElementById("cam-placeholder");
+        if(placeholder) placeholder.remove();
+        container.appendChild(webcam.canvas);
 
-        // ตั้งเวลาให้ทำงานซ้ำทุกๆ 3 นาที
-        automationInterval = setInterval(triggerCameraSession, INTERVAL_TIME);
+        // รัน Loop หลักของระบบทิ้งไว้
+        window.requestAnimationFrame(loop);
+
+        // เริ่มต้นการทำงานรอบแรกทันที
+        runSession();
     }
 
-    // ฟังก์ชันสำหรับเปิดกล้องและทำงานเป็นเวลา 10 วินาที
-    async function triggerCameraSession() {
-        updateStatus("กำลังเปิดกล้อง...", true);
+    // 2. ฟังก์ชันเริ่มสั่งให้กล้อง "จับภาพและทำนายผล"
+    async function runSession() {
+        updateStatus("กล้องกำลังทำงาน...", true);
+        document.getElementById("webcam-container").classList.add("active");
         
-        // Setup กล้องถ่ายภาพ
-        const flip = true;[cite: 1]
-        webcam = new tmImage.Webcam(200, 200, flip);[cite: 1]
-        await webcam.setup();[cite: 1]
-        await webcam.play();[cite: 1]
+        // สั่งเปิดการรับภาพจากกล้อง
+        if (webcam.webcam && webcam.webcam.srcObject) {
+            webcam.webcam.srcObject.getTracks().forEach(track => track.enabled = true);
+        }
         
-        // แสดงผลกล้องบน UI
-        const container = document.getElementById("webcam-container");
-        container.innerHTML = ""; 
-        container.appendChild(webcam.canvas);[cite: 1]
-        container.classList.add("active");
+        isActiveSession = true;
 
-        isLooping = true;
-        window.requestAnimationFrame(loop);[cite: 1]
-        updateStatus("กล้องกำลังทำงานและตรวจจับ...", true);
-
-        // เมื่อครบ 10 วินาที ให้ปิดกล้องและรอรอบถัดไป
+        // เมื่อทำงานครบ 10 วินาที ให้หยุดทำนายและพักกล้อง
         setTimeout(() => {
-            stopCameraSession();
+            stopSession();
         }, RUN_DURATION);
     }
 
-    // ฟังก์ชันสำหรับปิดกล้องชั่วคราวเพื่อรอรอบใหม่
-    function stopCameraSession() {
-        isLooping = false;
-        if (webcam) {
-            webcam.stop();
+    // 3. ฟังก์ชันสั่ง "พักกล้อง" เพื่อรอรอบถัดไป
+    function stopSession() {
+        isActiveSession = false;
+        document.getElementById("webcam-container").classList.remove("active");
+        
+        // สั่งปิด Track ภาพชั่วคราว (ไฟกล้องจะดับ หรือภาพจะหยุดนิ่งเพื่อประหยัดพลังงาน)
+        if (webcam.webcam && webcam.webcam.srcObject) {
+            webcam.webcam.srcObject.getTracks().forEach(track => track.enabled = false);
         }
-        
-        // รีเซ็ต UI ของกล้อง
-        const container = document.getElementById("webcam-container");
-        container.innerHTML = '<span style="color: #94a3b8; font-size: 14px;">กล้องปิดอยู่</span>';
-        container.classList.remove("active");
-        
-        // เริ่มแสดงเลขนับถอยหลัง 3 นาทีก่อนเริ่มรอบใหม่
-        startCountdown(INTERVAL_TIME / 1000 - (RUN_DURATION / 1000));
+
+        // ล้างค่าข้อความเปอร์เซ็นต์เก่าตอนดับกล้อง
+        for (let i = 0; i < maxPredictions; i++) {
+            labelContainer.childNodes[i].innerHTML = `<span>รอรอบถัดไป...</span> <strong>-</strong>`;
+        }
+
+        // เริ่มนับถอยหลัง 3 นาทีก่อนเริ่มรอบใหม่ (ลบเวลาที่เปิดกล้องไปแล้ว 10 วินาที)
+        let remainTime = (INTERVAL_TIME - RUN_DURATION) / 1000;
+        startCountdown(remainTime);
     }
 
-    // Loop อัปเดตเฟรมภาพจากกล้อง
+    // 4. Loop หลักที่คอยอัปเดตภาพ
     async function loop() {
-        if (!isLooping) return;
-        webcam.update();[cite: 1]
-        await predict();[cite: 1]
-        window.requestAnimationFrame(loop);[cite: 1]
+        if (isActiveSession) {
+            webcam.update(); 
+            await predict();
+        }
+        window.requestAnimationFrame(loop);
     }
 
-    // ฟังก์ชันทำนายผล
+    // 5. ฟังก์ชันทำนายผล
     async function predict() {
-        const prediction = await model.predict(webcam.canvas);[cite: 1]
-        for (let i = 0; i < maxPredictions; i++) {[cite: 1]
+        const prediction = await model.predict(webcam.canvas);
+        for (let i = 0; i < maxPredictions; i++) {
             const className = prediction[i].className;
-            const probability = (prediction[i].probability * 100).toFixed(0) + "%"; // ปรับแสดงผลเป็น % ให้ดูง่าย
-            
+            const probability = (prediction[i].probability * 100).toFixed(0) + "%";
             labelContainer.childNodes[i].innerHTML = `<span>${className}</span> <strong>${probability}</strong>`;
         }
     }
 
-    // ฟังก์ชันสำหรับเปลี่ยนข้อความสถานะบนหน้าจอ
+    // ฟังก์ชันช่วยแสดงสถานะ
     function updateStatus(text, isActive = false) {
         const statusText = document.getElementById("status-text");
         statusText.innerText = "สถานะ: " + text;
@@ -261,21 +263,22 @@
         }
     }
 
-    // ฟังก์ชันนับถอยหลังแสดงเวลาที่จะเปิดกล้องรอบถัดไป
+    // ฟังก์ชันช่วยนับถอยหลัง
     function startCountdown(seconds) {
         clearInterval(countdownInterval);
         let timeLeft = seconds;
         
         countdownInterval = setInterval(() => {
             let minutes = Math.floor(timeLeft / 60);
-            let secs = timeLeft % 60;
+            let secs = Math.floor(timeLeft % 60);
             let timeString = `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
             
-            updateStatus(`ปิดกล้องชั่วคราว (จะเปิดใหม่ในอีก ${timeString} นาที)`);
+            updateStatus(`พักระบบชั่วคราว (เริ่มใหม่ใน ${timeString} นาที)`);
             timeLeft--;
 
             if (timeLeft < 0) {
                 clearInterval(countdownInterval);
+                runSession(); // เมื่อหมดเวลานับถอยหลัง ให้เริ่มทำงานรอบใหม่
             }
         }, 1000);
     }
